@@ -1,0 +1,612 @@
+{
+  "info": {
+    "_postman_id": "c9d31266-46d2-4d3c-b5f3-8dfc3fb4b9f3",
+    "name": "Async Payments Service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Collection for testing async payment processing service: auth, idempotency, validation, webhook and DLQ scenarios."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "apiKey",
+      "value": "super-secret-key"
+    },
+    {
+      "key": "webhookUrl",
+      "value": "https://webhook.site/YOUR-ID"
+    },
+    {
+      "key": "badWebhookUrl",
+      "value": "https://example.com/non-existent-webhook-endpoint-xyz"
+    },
+    {
+      "key": "idemKey",
+      "value": ""
+    },
+    {
+      "key": "paymentId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Healthcheck",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/healthz",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "healthz"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Body has status=ok', function () {",
+              "  var json = pm.response.json();",
+              "  pm.expect(json.status).to.eql('ok');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Create Payment (new, expect 202)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('idemKey')) {",
+              "  pm.collectionVariables.set('idemKey', pm.variables.replaceIn('{{$guid}}'));",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 202', function () {",
+              "  pm.response.to.have.status(202);",
+              "});",
+              "var json = pm.response.json();",
+              "pm.test('Has payment_id and pending status', function () {",
+              "  pm.expect(json).to.have.property('payment_id');",
+              "  pm.expect(json.status).to.eql('pending');",
+              "});",
+              "pm.collectionVariables.set('paymentId', json.payment_id);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idemKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 1500.50,\n  \"currency\": \"RUB\",\n  \"description\": \"Order #1001\",\n  \"metadata\": {\n    \"order_id\": \"1001\",\n    \"customer_id\": \"c-1\"\n  },\n  \"webhook_url\": \"{{webhookUrl}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments"
+          ]
+        }
+      }
+    },
+    {
+      "name": "11 - Create Payment Idempotent Replay (same body, expect 200)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "var json = pm.response.json();",
+              "pm.test('Same payment_id returned', function () {",
+              "  pm.expect(json.payment_id).to.eql(pm.collectionVariables.get('paymentId'));",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idemKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 1500.50,\n  \"currency\": \"RUB\",\n  \"description\": \"Order #1001\",\n  \"metadata\": {\n    \"order_id\": \"1001\",\n    \"customer_id\": \"c-1\"\n  },\n  \"webhook_url\": \"{{webhookUrl}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments"
+          ]
+        }
+      }
+    },
+    {
+      "name": "12 - Create Payment Idempotency Conflict (different body, expect 409)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 409', function () {",
+              "  pm.response.to.have.status(409);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idemKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 1600.50,\n  \"currency\": \"RUB\",\n  \"description\": \"Order #1001 modified\",\n  \"metadata\": {\n    \"order_id\": \"1001\",\n    \"customer_id\": \"c-1\"\n  },\n  \"webhook_url\": \"{{webhookUrl}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments"
+          ]
+        }
+      }
+    },
+    {
+      "name": "20 - Get Payment by ID",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "var json = pm.response.json();",
+              "pm.test('Response has expected fields', function () {",
+              "  pm.expect(json).to.have.property('id');",
+              "  pm.expect(json).to.have.property('status');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments",
+            "{{paymentId}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "21 - Get Unknown Payment (expect 404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 404', function () {",
+              "  pm.response.to.have.status(404);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments/00000000-0000-0000-0000-000000000000",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments",
+            "00000000-0000-0000-0000-000000000000"
+          ]
+        }
+      }
+    },
+    {
+      "name": "30 - Auth Missing Header (expect 422)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 422', function () {",
+              "  pm.response.to.have.status(422);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments",
+            "{{paymentId}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "31 - Auth Wrong API Key (expect 401)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 401', function () {",
+              "  pm.response.to.have.status(401);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "wrong-key"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments/{{paymentId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments",
+            "{{paymentId}}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "40 - Validation amount=0 (expect 422)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('idemKey', pm.variables.replaceIn('{{$guid}}'));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 422', function () {",
+              "  pm.response.to.have.status(422);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idemKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 0,\n  \"currency\": \"RUB\",\n  \"description\": \"Invalid amount\",\n  \"metadata\": {},\n  \"webhook_url\": \"{{webhookUrl}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments"
+          ]
+        }
+      }
+    },
+    {
+      "name": "41 - Validation bad currency (expect 422)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('idemKey', pm.variables.replaceIn('{{$guid}}'));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 422', function () {",
+              "  pm.response.to.have.status(422);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idemKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 10.00,\n  \"currency\": \"GBP\",\n  \"description\": \"Invalid currency\",\n  \"metadata\": {},\n  \"webhook_url\": \"{{webhookUrl}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments"
+          ]
+        }
+      }
+    },
+    {
+      "name": "42 - Validation bad webhook_url (expect 422)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('idemKey', pm.variables.replaceIn('{{$guid}}'));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 422', function () {",
+              "  pm.response.to.have.status(422);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idemKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 10.00,\n  \"currency\": \"RUB\",\n  \"description\": \"Invalid webhook\",\n  \"metadata\": {},\n  \"webhook_url\": \"not-url\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments"
+          ]
+        }
+      }
+    },
+    {
+      "name": "50 - Create Payment with failing webhook (for DLQ check)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.collectionVariables.set('idemKey', pm.variables.replaceIn('{{$guid}}'));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status is 202', function () {",
+              "  pm.response.to.have.status(202);",
+              "});",
+              "var json = pm.response.json();",
+              "pm.collectionVariables.set('paymentId', json.payment_id);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{apiKey}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{idemKey}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": 999.99,\n  \"currency\": \"USD\",\n  \"description\": \"Webhook fail scenario\",\n  \"metadata\": {\n    \"scenario\": \"dlq\"\n  },\n  \"webhook_url\": \"{{badWebhookUrl}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/payments",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "payments"
+          ]
+        }
+      }
+    }
+  ]
+}
